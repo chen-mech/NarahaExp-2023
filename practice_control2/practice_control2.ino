@@ -1,4 +1,4 @@
-#define joint_num 3
+#define joint_num 3//あいうえお
 
 //ピン指定
 const int yled = 46;
