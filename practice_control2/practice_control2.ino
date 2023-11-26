@@ -1,97 +1,75 @@
-const joint_num = 3;//あいうえお
+const int NUM_JOINT = 3;  //関節3つで実験
 
-//ピン指定
+//LED関連
 const int yled = 46;
 const int rled = 48;
 const int ledLoop_Times = 3;
 
-//モータ
-const int rotateDirection_pinNumber[joint_num] = { 32, 30, 36 };
+//モータ関連
+const int rotateDirection_pinNumber[NUM_JOINT] = { 32, 30, 36 };
+const int rotateDirection[NUM_JOINT] = { 1, 1, -1 };  //角度が発散する様に挙動したらここの正負をcheck
 
-//配線によるモータの回転方向 角度が発散する様に挙動したらここの正負をcheck
-const double rotateDirection[joint_num] = { 1, 1, -1 };  
-const int motorPWM_pinNumber[joint_num] = { 3, 2, 5 };
-const int angleWidth_variation = 5;
+//ポテンショメータ関連
+const int readPotentio_pinNumber[NUM_JOINT] = { 0, 1, 2 };
+const int readAngleDirection[NUM_JOINT] = { -1, 1, 1 };
+const int angle0deg_potentioNumeric[NUM_JOINT] = { 579, 460, 605 };
+const int Width90deg_potentioNumeric = 337;
 
-//本番用に設定済み
-const int readPotentio_pinNumber[joint_num] = { 0, 1, 2 };
+//モータドライバ関連
+const int motorPWM_pinNumber[NUM_JOINT] = { 3, 2, 5 };
+double directedVoltage[NUM_JOINT];
+const double directedVoltage_max[NUM_JOINT] = { 30.0, 50.0, 50.0 };
 
-//ポテンショデータ
-const int angle0deg_potentioNumeric[joint_num] = { 579, 460, 605 };
-//ポテンショの読む方向
-const int readAngleDirection[joint_num] = { -1, 1, 1 };
-//90°回転したときのポテンショメータの変化幅
-const double Width90deg_potentioNumeric = 337;
+//Arduinoによる角度読み取り
+int angleRead_potentioNumeric[NUM_JOINT];
+double angle[NUM_JOINT];
+double angle_target[NUM_JOINT] = { 35.0, 20.0, -35.0 };
+const double angle_target_max = 40.0;
+const double WIDTH_ANGLE_VARIATION = 5.0;
 
+//位置PIDゲイン
+double kp[NUM_JOINT] = { 3.0, 0.5, 1.1 };
+const double kd[NUM_JOINT] = { 0.0, 0.0006, 20.0 };
+const double ki[NUM_JOINT] = { 0.0015, 0.0002, 0.0002 };
+const double kf_plus[NUM_JOINT] = { 0.0, -0.5, -0.7 };
+const double kf_minus[NUM_JOINT] = { 0.0, 0.5, 0.7 };
+const int sigFigure_Gaindisplay = 4;
 
-//モータドライバ(MD)に出力されるデューティー比
-double Duty2MD[joint_num];
+//PID制御における制御偏差(deviation)
+double deviation[NUM_JOINT];
+double deviation_previous[NUM_JOINT];
+double deviation_INT[NUM_JOINT];
+double deviation_DIFF[NUM_JOINT];
 
-int angleRead_potentioNumeric[joint_num];
-
-//angle_previousは今回使わない
-double angle[joint_num];
+//D制御の偏差微分計算
 const int NUM_ANGLE_PREVIOUS = 10;
-double angle_previous[joint_num];
-double angle_previous_array[joint_num][NUM_ANGLE_PREVIOUS];
+double angle_previous[NUM_JOINT];
+double angle_previous_array[NUM_JOINT][NUM_ANGLE_PREVIOUS];
 int pointer_angle_previous = 0;
-double angle_target[joint_num] = { 35.0, 20.0, -35.0 };
-
-//PID制御における制御偏差(deviation)とその微分値、積分値
-double deviation[joint_num];
-double deviation_previous[joint_num];
-double deviation_INT[joint_num];
-double deviation_DIFF[joint_num];
 
 //移動平均フィルタ
-bool isMovingfilterValidated = true;
+bool isMovingfilterEnabled = true;
 const int stockRotation_sampleTerm = 10;
 int stockRotation_count = 0;
-double angle_stock[joint_num][stockRotation_sampleTerm];
-double angle_samplesummed[joint_num] = { 0.0, 0.0, 0.0 };
+double angle_stock[NUM_JOINT][stockRotation_sampleTerm];
+double angle_samplesummed[NUM_JOINT] = { 0.0, 0.0, 0.0 };
 
-
-long time_data;
-long time_start = 0;
-long pre_log_time = 0;
-long log_interval = 30;
-
-double I_sw[joint_num] = { 1, 1, 1 };
-
+//周期取得
+int time_start_msec = 0;
 double t = 0.0;
 double dt_ms = 1.0;
 double dt_us = 1.0;
-char key;
-int flag = 0;
 
-//制御開始タイミングを管理するフラグ
-bool HasControlStarted = false;
-
-//デューティー比最大値
-const double val_max[joint_num] = { 30, 50, 50 };
-
-const double angle_max = 40;
-
-//アンチワインドアップ　今回はいじらない
-boolean anti_windup = false;
+//アンチワインドアップ
+double I_sw[NUM_JOINT] = { 1, 1, 1 };
+bool anti_windup = false;
 double anti_windup_th = 0.5;
 
-//位置PIDゲイン
-//constで固定
-double kp[joint_num] = { 3.0, 0.5, 1.1 };
-const double kd[joint_num] = { 0.0, 0.0006, 20.0 };
-//const double kd[joint_num] = { 0.0, 0.0, 0.0 };
-const double ki[joint_num] = { 0.0015, 0.0002, 0.0002 };
-const double kf_plus[joint_num] = { 0.0, -0.5, -0.7 };
-const double kf_minus[joint_num] = { 0.0, 0.5, 0.7 };
-
-//ゲインを有効数字何桁まで表示する？
-const int sigFigure_Gaindisplay = 4;
-
-
-bool over_limit = false;
-
-//コマンドリスト
+//シリアル通信関連
+bool HasControlStarted = false;
+const int NUM_SEND_INTERVAL = 10;
+int pointer_sendcount = 0;
+char ch_received;
 /*
 No.0 s:Start 通信のスタート
 No.1 f:Form デフォルトで規定するモジュール位置
@@ -105,9 +83,9 @@ No.8 n:関節3を-5°
 */
 
 //visualizeアプリとの通信頻度の指定
-int plot_count = 0;
+
 //10ループに1回シリアル通信でデータを送る
-const int sendInterval_number = 10;
+
 
 double time_present_ms = 1.0;
 double time_present_us = 1.0;
@@ -131,8 +109,7 @@ void setup() {
     digitalWrite(rled, LOW);
     delay(500);
   }
-  flag = 0;
-  for (int i = 0; i < joint_num; i++) {
+  for (int i = 0; i < NUM_JOINT; i++) {
     pinMode(rotateDirection_pinNumber[i], OUTPUT);
     pinMode(motorPWM_pinNumber[i], OUTPUT);
 
@@ -146,12 +123,12 @@ void setup() {
   analogWrite(34, 0);
   analogWrite(4, 0);
 
-  for (int i = 0; i < joint_num; i++) {
+  for (int i = 0; i < NUM_JOINT; i++) {
     for (int j = 0; j < stockRotation_sampleTerm; j++) {
       angle_stock[i][j] = 0.0;
     }
   }
-  for (int i = 0; i < joint_num; i++) {
+  for (int i = 0; i < NUM_JOINT; i++) {
     for (int j = 0; j < NUM_ANGLE_PREVIOUS; j++) {
       angle_previous_array[i][j] = 0.0;
     }
@@ -161,12 +138,12 @@ void setup() {
 void loop() {
   if (HasControlStarted == false) {
     if (Serial.available() > 0) {
-      key = Serial.read();
-      if (key == 's') {
+      ch_received = Serial.read();
+      if (ch_received == 's') {
         HasControlStarted = true;
-        time_start = millis();
-      } else if (key == 'g') {
-        for (int i = 0; i < joint_num; i++) {
+        time_start_msec = millis();
+      } else if (ch_received == 'g') {
+        for (int i = 0; i < NUM_JOINT; i++) {
           Serial.print(",kp:");
           Serial.print(kp[i], sigFigure_Gaindisplay);
           Serial.print(",kd:");
@@ -186,18 +163,17 @@ void loop() {
   else {
     digitalWrite(rled, HIGH);
 
-    t = (double)(millis() - time_start);
+    t = (double)(millis() - time_start_msec);
     //キー入力
     if (Serial.available() > 0) {
-      key = Serial.read();
+      ch_received = Serial.read();
 
-      if (key == 'f') {
+      if (ch_received == 'f') {
         angle_target[0] = -40;
         angle_target[1] = 30;
         angle_target[2] = 30;
-        flag = 1;
         t = 0;
-      } else if (key == 'r') {
+      } else if (ch_received == 'r') {
         angle_target[0] = 0;
         angle_target[1] = 0;
         angle_target[2] = 0;
@@ -206,29 +182,29 @@ void loop() {
 
 
       else {
-        switch (key) {
+        switch (ch_received) {
           case 't':
-            angle_target[0] += angleWidth_variation;
+            angle_target[0] += WIDTH_ANGLE_VARIATION;
             break;
 
           case 'g':
-            angle_target[1] += angleWidth_variation;
+            angle_target[1] += WIDTH_ANGLE_VARIATION;
             break;
 
           case 'b':
-            angle_target[2] += angleWidth_variation;
+            angle_target[2] += WIDTH_ANGLE_VARIATION;
             break;
 
           case 'y':
-            angle_target[0] -= angleWidth_variation;
+            angle_target[0] -= WIDTH_ANGLE_VARIATION;
             break;
 
           case 'h':
-            angle_target[1] -= angleWidth_variation;
+            angle_target[1] -= WIDTH_ANGLE_VARIATION;
             break;
 
           case 'n':
-            angle_target[2] -= angleWidth_variation;
+            angle_target[2] -= WIDTH_ANGLE_VARIATION;
             break;
 
           default:
@@ -237,25 +213,25 @@ void loop() {
       }
       //目的角の最大値設定
       //コマンドがきたときだけ走らせる
-      for (int i = 0; i < joint_num; i++) {
-        if (angle_target[i] > angle_max) {
-          angle_target[i] = angle_max;
+      for (int i = 0; i < NUM_JOINT; i++) {
+        if (angle_target[i] > angle_target_max) {
+          angle_target[i] = angle_target_max;
         }
-        if (angle_target[i] < -angle_max) {
-          angle_target[i] = -angle_max;
+        if (angle_target[i] < -angle_target_max) {
+          angle_target[i] = -angle_target_max;
         }
       }
     }
 
-    for (int i = 0; i < joint_num; i++) {
+    for (int i = 0; i < NUM_JOINT; i++) {
 
       //関節角度取得
       //データ保存
       angleRead_potentioNumeric[i] = analogRead(readPotentio_pinNumber[i]);
       angle[i] = (double)((angleRead_potentioNumeric[i] - angle0deg_potentioNumeric[i]) * readAngleDirection[i]) * 90 / Width90deg_potentioNumeric;
 
-      //変数名validateは誤解を生む
-      if (isMovingfilterValidated) {
+      
+      if (isMovingfilterEnabled) {
         stockRotation_count++;
         if (stockRotation_count >= stockRotation_sampleTerm) {
           stockRotation_count = 0;
@@ -270,7 +246,7 @@ void loop() {
         angle_samplesummed[i] = 0.0;
       }
 
-      //msecだと分かるような変数名
+
       if (t < 500) {
         angle[i] = angle_target[i];
       }
@@ -287,42 +263,42 @@ void loop() {
       deviation_INT[i] += deviation[i] * dt_ms;
 
       int pointer = pointer_angle_previous + 1;
-      if (pointer == NUM_ANGLE_PREVIOUS){
+      if (pointer == NUM_ANGLE_PREVIOUS) {
         pointer = 0;
       }
       deviation_DIFF[i] = (angle_previous_array[i][pointer] - angle[i]) / (dt_us / 1000.0d);
 
       deviation_previous[i] = deviation[i];
-      Duty2MD[i] = deviation[i] * kp[i] + deviation_DIFF[i] * kd[i] + deviation_INT[i] * ki[i];
+      directedVoltage[i] = deviation[i] * kp[i] + deviation_DIFF[i] * kd[i] + deviation_INT[i] * ki[i];
 
       if (angle_target[i] >= 0) {
-        Duty2MD[i] += angle_target[i] * kf_plus[i]*rotateDirection[i];
+        directedVoltage[i] += angle_target[i] * kf_plus[i] * rotateDirection[i];
       }
       if (angle_target[i] < 0) {
-        Duty2MD[i] += angle_target[i] * kf_minus[i]*rotateDirection[i];
+        directedVoltage[i] += angle_target[i] * kf_minus[i] * rotateDirection[i];
       }
       //回転方向指定
-      if (Duty2MD[i] * rotateDirection[i] < 0) {
+      if (directedVoltage[i] * rotateDirection[i] < 0) {
         digitalWrite(rotateDirection_pinNumber[i], LOW);
       } else {
         digitalWrite(rotateDirection_pinNumber[i], HIGH);
       }
       I_sw[i] = 1;
-      if (Duty2MD[i] > val_max[i]) {
-        Duty2MD[i] = val_max[i];
+      if (directedVoltage[i] > directedVoltage_max[i]) {
+        directedVoltage[i] = directedVoltage_max[i];
         I_sw[i] = 0;
       }
-      if (Duty2MD[i] < -val_max[i]) {
-        Duty2MD[i] = -val_max[i];
+      if (directedVoltage[i] < -directedVoltage_max[i]) {
+        directedVoltage[i] = -directedVoltage_max[i];
         I_sw[i] = 0;
       }
 
       //pwm書き込み
-      analogWrite(motorPWM_pinNumber[i], abs(Duty2MD[i]));
+      analogWrite(motorPWM_pinNumber[i], abs(directedVoltage[i]));
       //4番目
       analogWrite(4, 30);
       angle_previous[i] = angle[i];
-      
+
       pointer_angle_previous += 1;
       if (pointer_angle_previous >= NUM_ANGLE_PREVIOUS) {
         pointer_angle_previous = 0;
@@ -330,8 +306,7 @@ void loop() {
       angle_previous_array[i][pointer_angle_previous] = angle[i];
     }
     /*if (millis() - pre_log_time > log_interval) {*/
-    if (plot_count == sendInterval_number - 1) {
-      //データ出力
+    if (pointer_sendcount == NUM_SEND_INTERVAL - 1) {
       Serial.print("a0:");
       Serial.print(angle[0]);
       Serial.print(",ta0:");
@@ -365,16 +340,16 @@ void loop() {
       Serial.print(",INT[2]:");
       Serial.print(deviation_INT[2]);
       Serial.print(", Duty0:");
-      Serial.print(Duty2MD[0]);
+      Serial.print(directedVoltage[0]);
       Serial.print(", Duty1:");
-      Serial.print(Duty2MD[1]);
+      Serial.print(directedVoltage[1]);
       Serial.print(", Duty2:");
-      Serial.print(Duty2MD[2]);
+      Serial.print(directedVoltage[2]);
       Serial.print(", dt:");
       Serial.println(dt_ms);
-      plot_count = 0;
+      pointer_sendcount = 0;
     }
-    plot_count += 1;
+    pointer_sendcount += 1;
 
     //時間更新
     time_previous_ms = time_present_ms;
