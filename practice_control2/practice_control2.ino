@@ -1,9 +1,9 @@
-#define joint_num 3//あいうえお
-//あかさたな
+const joint_num = 3;//あいうえお
+
 //ピン指定
 const int yled = 46;
 const int rled = 48;
-const int ledLoop_Number = 3;
+const int ledLoop_Times = 3;
 
 //モータ
 const int rotateDirection_pinNumber[joint_num] = { 32, 30, 36 };
@@ -125,7 +125,7 @@ void setup() {
   pinMode(rled, OUTPUT);
 
   //触れると危険なものはconstで宣言
-  for (int i = 0; i < ledLoop_Number; i++) {
+  for (int i = 0; i < ledLoop_Times; i++) {
     digitalWrite(rled, HIGH);
     delay(500);
     digitalWrite(rled, LOW);
