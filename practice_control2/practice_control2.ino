@@ -5,19 +5,23 @@ const int yled = 46;
 const int rled = 48;
 const int ledLoop_Times = 3;
 
+//アナログスイッチ関連
+const int switch1_pinNumber = 57;
+const int switch2_pinNumber = 56;
+
 //モータ関連
 const int rotateDirection_pinNumber[NUM_JOINT] = { 32, 30, 36 };
-const int rotateDirection[NUM_JOINT] = { 1, 1, -1 };  //角度が発散する様に挙動したらここの正負をcheck
+const int rotateDirection[NUM_JOINT] = { 1, 1, -1 };  //角度が発散する様に挙動したらここの正負を確認
 
 //ポテンショメータ関連
 const int readPotentio_pinNumber[NUM_JOINT] = { 0, 1, 2 };
-const int readAngleDirection[NUM_JOINT] = { -1, 1, 1 };
+const int readAngleDirection[NUM_JOINT] = { -1, 1, 1 };//角度の向きが違ったらここの正負を確認
 const int angle0deg_potentioNumeric[NUM_JOINT] = { 579, 460, 605 };
 const int Width90deg_potentioNumeric = 337;
 
 //モータドライバ関連
 const int motorPWM_pinNumber[NUM_JOINT] = { 3, 2, 5 };
-double directedVoltage[NUM_JOINT];
+double directedVoltage[NUM_JOINT] = {0.0, 0.0, 0.0};
 const double directedVoltage_max[NUM_JOINT] = { 30.0, 50.0, 50.0 };
 
 //Arduinoによる角度読み取り
@@ -27,7 +31,7 @@ double angle_target[NUM_JOINT] = { 35.0, 20.0, -35.0 };
 const double angle_target_max = 40.0;
 const double WIDTH_ANGLE_VARIATION = 5.0;
 
-//位置PIDゲイン
+//位置PID+FFゲイン
 double kp[NUM_JOINT] = { 3.0, 0.5, 1.1 };
 const double kd[NUM_JOINT] = { 0.0, 0.0006, 20.0 };
 const double ki[NUM_JOINT] = { 0.0015, 0.0002, 0.0002 };
@@ -54,11 +58,25 @@ int stockRotation_count = 0;
 double angle_stock[NUM_JOINT][stockRotation_sampleTerm];
 double angle_samplesummed[NUM_JOINT] = { 0.0, 0.0, 0.0 };
 
+//切替機構
+bool IsWireSwitched = false;
+const int NUM_DIRECTED_VOLTAGE = 10;
+int directedVoltage_diff_count[NUM_JOINT] = {0, 0, 0};
+double directedVoltage_previous[NUM_JOINT] = {0.0, 0.0, 0.0};
+double directedVoltage_diff[NUM_JOINT] = {0.0, 0.0, 0.0};
+double directedVoltage_diff_aray[NUM_JOINT][NUM_DIRECTED_VOLTAGE];
+double thresholdVoltage[NUM_JOINT] = {0.1, 0.1, 0.1};//TODO トリガ電圧を設定
+bool IsSwitchingEnabled[NUM_JOINT] = {false, false, false};
+
 //周期取得
 int time_start_msec = 0;
 double t = 0.0;
 double dt_ms = 1.0;
 double dt_us = 1.0;
+double time_present_ms = 1.0;
+double time_present_us = 1.0;
+double time_previous_ms = 0.0;
+double time_previous_us = 0.0;
 
 //アンチワインドアップ
 double I_sw[NUM_JOINT] = { 1, 1, 1 };
@@ -72,7 +90,7 @@ int pointer_sendcount = 0;
 char ch_received;
 /*
 No.0 s:Start 通信のスタート
-No.1 f:Form デフォルトで規定するモジュール位置
+No.1 f:Format デフォルトで規定するモジュール位置
 No.2 r:Reset モジュール位置を1直線に戻す
 No.3 t:関節1を+5°
 No.4 y:関節1を-5°
@@ -80,35 +98,27 @@ No.5 g:関節2を+5°
 No.6 h:関節2を-5°
 No.7 b:関節3を+5°
 No.8 n:関節3を-5°
+No.9 w:切り替えの指示
 */
 
-//visualizeアプリとの通信頻度の指定
-
-//10ループに1回シリアル通信でデータを送る
-
-
-double time_present_ms = 1.0;
-double time_present_us = 1.0;
-double time_previous_ms = 0.0;
-double time_previous_us = 0.0;
-
-
-
 void setup() {
-  // put your setup code here, to run once
-
   Serial.begin(115200);
 
   pinMode(yled, OUTPUT);
   pinMode(rled, OUTPUT);
 
-  //触れると危険なものはconstで宣言
+  
   for (int i = 0; i < ledLoop_Times; i++) {
     digitalWrite(rled, HIGH);
     delay(500);
     digitalWrite(rled, LOW);
     delay(500);
   }
+  pinMode(switch1_pinNumber, OUTPUT);
+  pinMode(switch2_pinNumber, OUTPUT); 
+  digitalWrite(switch1_pinNumber, HIGH);
+  digitalWrite(switch2_pinNumber, LOW); 
+
   for (int i = 0; i < NUM_JOINT; i++) {
     pinMode(rotateDirection_pinNumber[i], OUTPUT);
     pinMode(motorPWM_pinNumber[i], OUTPUT);
@@ -117,7 +127,7 @@ void setup() {
     analogWrite(rotateDirection_pinNumber[i], 0);
   }
 
-  //モータドライバに入力する4番目のピンもLOWにしないとMDにエラーが走る
+  //モータドライバに入力する4番目のピンもLOWにしないとエラーが走る
   pinMode(34, OUTPUT);
   pinMode(4, OUTPUT);
   analogWrite(34, 0);
@@ -128,9 +138,16 @@ void setup() {
       angle_stock[i][j] = 0.0;
     }
   }
+
   for (int i = 0; i < NUM_JOINT; i++) {
     for (int j = 0; j < NUM_ANGLE_PREVIOUS; j++) {
       angle_previous_array[i][j] = 0.0;
+    }
+  }
+
+  for (int i = 0; i < NUM_JOINT; i++) {
+    for (int j = 0; j < NUM_DIRECTED_VOLTAGE; j++) {
+      directedVoltage_diff_aray[i][j] = 0.0;
     }
   }
 }
@@ -207,6 +224,10 @@ void loop() {
             angle_target[2] -= WIDTH_ANGLE_VARIATION;
             break;
 
+          case 'w':
+            IsWireSwitched = true;
+            break;
+
           default:
             break;
         }
@@ -269,14 +290,38 @@ void loop() {
       deviation_DIFF[i] = (angle_previous_array[i][pointer] - angle[i]) / (dt_us / 1000.0d);
 
       deviation_previous[i] = deviation[i];
-      directedVoltage[i] = deviation[i] * kp[i] + deviation_DIFF[i] * kd[i] + deviation_INT[i] * ki[i];
 
+      directedVoltage_previous[i] = directedVoltage[i]; 
+      directedVoltage[i] = deviation[i] * kp[i] + deviation_DIFF[i] * kd[i] + deviation_INT[i] * ki[i];
+      
       if (angle_target[i] >= 0) {
-        directedVoltage[i] += angle_target[i] * kf_plus[i] * rotateDirection[i];
+        directedVoltage[i] += angle_target[i] * kf_plus[i] * rotateDirection[i]; 
       }
       if (angle_target[i] < 0) {
         directedVoltage[i] += angle_target[i] * kf_minus[i] * rotateDirection[i];
       }
+
+      //配線切替のために指令電圧偏差を格納する配列を作成
+      directedVoltage_diff[i] = directedVoltage[i] - directedVoltage_previous[i];
+      directedVoltage_diff_count[i] ++;
+      if(directedVoltage_diff_count[i] >= NUM_DIRECTED_VOLTAGE){
+        directedVoltage_diff_count[i] = 0;
+      }
+      directedVoltage_diff_aray[i][directedVoltage_diff_count[i]] = directedVoltage_diff[i];
+
+      //スイッチICの切り替え条件
+      if(IsWireSwitched == true){
+        IsSwitchingEnabled[i] = true;
+        for(int j = 0; j<NUM_DIRECTED_VOLTAGE; j++ ){
+          if(directedVoltage_diff_aray[i][j] < thresholdVoltage[i]){
+            IsSwitchingEnabled[i] = false;
+          }
+        }
+      }
+
+      
+
+
       //回転方向指定
       if (directedVoltage[i] * rotateDirection[i] < 0) {
         digitalWrite(rotateDirection_pinNumber[i], LOW);
@@ -305,7 +350,14 @@ void loop() {
       }
       angle_previous_array[i][pointer_angle_previous] = angle[i];
     }
-    /*if (millis() - pre_log_time > log_interval) {*/
+    
+    if(IsSwitchingEnabled[1] == true && IsSwitchingEnabled[2] == true && IsSwitchingEnabled[1] == true){
+      digitalWrite(switch1_pinNumber, LOW);
+      digitalWrite(switch2_pinNumber, HIGH); 
+      //LED光らせ
+      IsWireSwitched = false;
+    }
+
     if (pointer_sendcount == NUM_SEND_INTERVAL - 1) {
       Serial.print("a0:");
       Serial.print(angle[0]);
@@ -361,3 +413,5 @@ void loop() {
     delay(1);
   }
 }
+
+
