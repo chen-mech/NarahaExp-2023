@@ -16,7 +16,7 @@ const int rotateDirection[NUM_JOINT] = { 1, 1, -1 };  //角度が発散する様
 //ポテンショメータ関連
 const int readPotentio_pinNumber[NUM_JOINT] = { 0, 1, 4 };
 const int readAngleDirection[NUM_JOINT] = { 1, 1, 1 };//角度の向きが違ったらここの正負を確認
-const int angle0deg_potentioNumeric[NUM_JOINT] = { 480, 468, 542 };
+const int angle0deg_potentioNumeric[NUM_JOINT] = { 480, 458, 542 };
 const int WIDTH_90DEG_POTENTIO = 337;
 
 //モータドライバ関連
@@ -27,14 +27,16 @@ const double directedVoltage_max[NUM_JOINT] = { 30.0, 50.0, 50.0 };
 //角度情報
 int angleRead_potentioNumeric[NUM_JOINT];//0~1023の間の整数
 double angle[NUM_JOINT];//deg
-double angle_target[NUM_JOINT] = { 5.0, 5.0, 5.0 };//deg
+double angle_target[NUM_JOINT] = { 40.0, 40.0, -40.0 };//deg
 const double angle_target_max = 40.0;//deg
 const double WIDTH_ANGLE_VARIATION = 5.0;//deg
 
 //位置PID+FFゲイン
-const double kp[NUM_JOINT] = { 1.0, 0.5, 1.1 };
-const double kd[NUM_JOINT] = { 0.0, 0.0006, 20.0 };
-const double ki[NUM_JOINT] = { 0.0015, 0.0002, 0.0002 };
+//const double kp[NUM_JOINT] = { 1.0, 1.0, 1.1 };//下限
+const double kp[NUM_JOINT] = { 2.0, 2.0, 2.2 };//最適
+//const double kp[NUM_JOINT] = { 3.0, 3.0, 3.3 };//上限
+const double kd[NUM_JOINT] = { 5.0, 10.0, 20.0 };
+const double ki[NUM_JOINT] = { 0.0002, 0.0002, 0.0002 };
 const double kf_plus[NUM_JOINT] = { 0.0, -0.5, -0.7 };
 const double kf_minus[NUM_JOINT] = { 0.0, 0.5, 0.7 };
 const int NUM_GAIN_SIGFIG = 4;//ゲインを小数点以下何位まで表示するか？
@@ -49,7 +51,8 @@ double deviation_DIFF[NUM_JOINT];
 const int NUM_ANGLE_PREVIOUS = 10;
 double angle_previous[NUM_JOINT];//機能が重複している
 double angle_previous_array[NUM_JOINT][NUM_ANGLE_PREVIOUS];
-int pointer_angle_previous = 0;
+int pointer_angle_previous[NUM_JOINT] = {0, 0, 0};
+int pointer[NUM_JOINT] = {0, 0, 0};
 
 //移動平均フィルタ
 bool isMovingfilterEnabled = true;
@@ -65,20 +68,20 @@ bool jointAngle_Mode = false;
 //うまくいかなかった時の原因がすぐわかるようにする
 //両方が絶対にtrueにならないようにする
 int counter_trigger_stock[NUM_JOINT] = {0, 0, 0};
-const int NUM_TRIGGER_STOCK = 15;
+const int NUM_TRIGGER_STOCK = 25;//平均何ループ分とるか
 double stock_trigger_array[NUM_JOINT][NUM_TRIGGER_STOCK];
 double mean_valueStock[NUM_JOINT] = {0.0, 0.0, 0.0};
 double error_valueStock[NUM_JOINT] = {0.0, 0.0, 0.0};
 double error_valueStock_forcommunicate[NUM_JOINT] = {0.0, 0.0, 0.0};
 int counter_error_stock[NUM_JOINT] = {0, 0, 0};
-const int NUM_ERROR_STOCK = 10;
+const int NUM_ERROR_STOCK = 125;//何ループ分のデータを閾値と比較するか
 double stock_error_array[NUM_JOINT][NUM_ERROR_STOCK];
 
 
 //切替機構
 bool IsWireSwitched = false;
-const double thresholdVoltage[NUM_JOINT] = {0.1 , 0.01, 0.1};//TODO 
-const double thresholdAngle[NUM_JOINT] = {0.1, 0.5, 0.6}; //単位はdeg
+const double thresholdVoltage[NUM_JOINT] = {3.0 , 1.0, 5.0};
+const double thresholdAngle[NUM_JOINT] = {1.0, 0.8, 0.7}; //単位はdeg
 double threshold[NUM_JOINT] = {0.0, 0.0, 0.0};
 bool IsSwitchingEnabled[NUM_JOINT] = {false, false, false};
 
@@ -94,8 +97,9 @@ double time_previous_us = 0.0;
 
 
 
-//シリアル通信関連
+
 bool HasControlStarted = false;//シリアル通信と関係ない
+//シリアル通信関連
 const int NUM_SEND_INTERVAL = 6;
 int pointer_sendcount = 0;
 char ch_received;
@@ -200,6 +204,9 @@ void loop() {
           Serial.print(ki[i], NUM_GAIN_SIGFIG);
           Serial.print(",kf:");
           Serial.print(kf_plus[i], NUM_GAIN_SIGFIG);
+          Serial.print(",threshold:");
+          Serial.print(threshold[i], NUM_GAIN_SIGFIG);
+          
         }
         Serial.println("");
       }
@@ -324,11 +331,11 @@ void loop() {
       //deviation_DIFF[i] = (deviation_previous[i] - deviation[i]) / dt_ms;
       deviation_INT[i] += deviation[i] * dt_ms;
 
-      int pointer = pointer_angle_previous + 1;
-      if (pointer == NUM_ANGLE_PREVIOUS) {
-        pointer = 0;
+      pointer[i] = pointer_angle_previous[i] + 1;
+      if (pointer[i] == NUM_ANGLE_PREVIOUS) {
+        pointer[i] = 0;
       }
-      deviation_DIFF[i] = (angle_previous_array[i][pointer] - angle[i]) / (dt_us / 1000.0d);
+      deviation_DIFF[i] = (angle_previous_array[i][pointer[i]] - angle[i]) / (dt_us / 1000.0d);
 
       deviation_previous[i] = deviation[i];
 
@@ -392,7 +399,7 @@ void loop() {
       if(IsWireSwitched == true){
         IsSwitchingEnabled[i] = true;
         for(int j = 0; j<NUM_ERROR_STOCK; j++ ){
-          if(stock_error_array[i][j] > thresholdVoltage[i]){
+          if(stock_error_array[i][j] > threshold[i]){
             IsSwitchingEnabled[i] = false;
             break;
           }
@@ -406,11 +413,11 @@ void loop() {
       analogWrite(4, 30);
       angle_previous[i] = angle[i];
 
-      pointer_angle_previous += 1;
-      if (pointer_angle_previous >= NUM_ANGLE_PREVIOUS) {
-        pointer_angle_previous = 0;
+      pointer_angle_previous[i] += 1;
+      if (pointer_angle_previous[i] >= NUM_ANGLE_PREVIOUS) {
+        pointer_angle_previous[i] = 0;
       }
-      angle_previous_array[i][pointer_angle_previous] = angle[i];
+      angle_previous_array[i][pointer_angle_previous[i]] = angle[i];
     }//3つの関節のforループ終わり
 
 
